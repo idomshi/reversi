@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>リバーシ</title>
+    <script src="https://unpkg.com/vue@3.2.37/dist/vue.global.js"></script>
+    <style>
+        .board {
+            width: 720px;
+            height: 720px;
+            display: flex;
+            flex-wrap: wrap;
+        }
+
+        .cell {
+            width: 90px;
+            height: 90px;
+            box-sizing: border-box;
+            background-color: #387738;
+            border: rgb(35, 35, 35) solid 1px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .disk {
+            width: 80px;
+            height: 80px;
+            border-radius: 50%;
+        }
+
+        .disk-white {
+            background-color: rgb(240, 240, 240);
+            box-shadow: 3px 3px 3px #333;
+        }
+
+        .disk-black {
+            background-color: rgb(35, 35, 35);
+            box-shadow: 3px 3px 3px #333;
+        }
+
+        /* ↑ここにCSSを書く。 */
+    </style>
+</head>
+<body>
+    <div id="app">
+        <div class="board">
+            <div class="cell" v-for="(v, i) of board" :key="i">
+                <div class="disk" :class="v.color" @click="put([v.row, v.col])"></div>
+            </div>
+        </div>
+
+        <!-- ↑ここに表示するものを書く。 -->
+    </div>
+    
+    <script>
+        const App = {
+            setup() {
+                /**
+                 * ゲームの状態：プレイヤーのターン・コンピュータのターン・プレイヤーの勝ち・プレイヤーの負け・引き分け
+                 * @type {Ref<{ state: 'player', color: number } | { state: 'cpu', color: number } | { state: 'player_win' } | { state: 'player_lose' } | { state: 'draw' }>}
+                 */
+                const gameState = Vue.ref({ state: 'player', color: 1 })
+                const turn = Vue.ref(1)
+                const board_plain = Vue.ref([
+                    // 一番外側は番兵です。
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 1, -1, 0, 0, 0, 0,
+                    0, 0, 0, 0, -1, 1, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                    0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                ])
+
+                const board = Vue.computed(() => {
+                    const color = [
+                        ...board_plain.value.slice(11, 19),
+                        ...board_plain.value.slice(21, 29),
+                        ...board_plain.value.slice(31, 39),
+                        ...board_plain.value.slice(41, 49),
+                        ...board_plain.value.slice(51, 59),
+                        ...board_plain.value.slice(61, 69),
+                        ...board_plain.value.slice(71, 79),
+                        ...board_plain.value.slice(81, 89),
+                    ].map((v) => v === 1 ? 'disk-white' : v === -1 ? 'disk-black' : '')
+
+                    const result = []
+                    let idx = 0
+                    for (let row = 1; row <= 8; ++row) {
+                        for (let col = 1; col <= 8; ++col) {
+                            result.push({ color: color[idx], row: row, col: col })
+                            idx++
+                        }
+                    }
+
+                    return result
+                })
+
+                /**
+                 * 座標[row, col]からboard_plainのindexを求める。
+                 */
+                const p = ([row, col]) => row * 10 + col
+
+                const put = (pos) => {
+                    const res = try_put(turn.value, pos, board_plain.value)
+                    if (res.success) {
+                        board_plain.value = res.board
+                        gameState.value = { state: 'cpu', color: -turn.value }
+                    }
+                }
+
+                /**
+                 * posの位置に石が置けるか判定する
+                 * @type {(color: number, pos: [number, number], board: number[]) => { success: boolean, board: number[] }}
+                 */
+                const try_put = (color, pos, board) => {
+                    // 8方向に向かってput_rを呼び出す。
+                    const dir = [
+                        [-1, -1], [-1, 0], [-1, 1],
+                        [ 0, -1],          [ 0, 1],
+                        [ 1, -1], [ 1, 0], [ 1, 1],
+                    ]
+                    const result = dir.reduce((prev, c) => {
+                        if ((prev.board[p([pos[0] + c[0], pos[1] + c[1]])] === color)
+                            || (prev.board[p([pos[0] + c[0], pos[1] + c[1]])] === 0)) return prev
+                        const res = put_r(color, [pos[0] + c[0], pos[1] + c[1]], c, prev.board)
+                        return { success: res.success || prev.success, board: res.board }
+                    }, { success: false, board: [...board] })
+
+                    // 結果が{ success: true }だったらposに石を置いてreturnする。
+                    if (result.success) {
+                        result.board.splice(p(pos), 1, color)
+                        return result
+                    }
+
+                    // 結果が{ success: false }だったら元のboardをreturnする。
+                    return { success: false, board: board }
+                }
+
+                /**
+                 * dirの方向に再帰しながら石を置いていく
+                 * @type {(color: number, pos: [number, number], dir: [number, number], board: number[]) => { success: boolean, board: number[] }}
+                 */
+                const put_r = (color, pos, dir, board) => {
+                    // そもそも石が無かったら{ success: false }でreturn。
+                    if (board[p(pos)] === 0) return { success: false, board: board }
+
+                    // 色がcolorだったら{ success: true }でreturn。
+                    if (board[p(pos)] === color) return { success: true, board: board }
+                    
+                    // 色がcolorじゃなかったら次の石を見に行く。
+                    const res = put_r(color, [pos[0] + dir[0], pos[1] + dir[1]], dir, board)
+                    
+                    // 次の石を見に行った結果がダメだったら{ success: false }でreturn。
+                    if (!res.success) return { success: false, board: board }
+
+                    // それ以外だったらひっくりかえせるのでposの色をcolorに変えてreturn。
+                    const new_board = [...res.board]
+                    new_board.splice(p(pos), 1, color)
+                    return { success: true, board: new_board }
+                }
+
+                // TODO
+                // - [x] 盤面の評価関数を作る
+                // - [ ] ゲームのステート管理用のメソッドを作る
+                //   - [x] ステート用の変数を作る
+                //   - [x] ステートのウォッチャーを作る
+                //   - [ ] ステート変更用の関数はどうしよう
+                // - [ ] CPUの思考ルーチンを作る
+                // - [x] 置ける場所一覧を作る関数を作る
+                // わりとやることが多い。
+
+                /**
+                 * CPUの思考ルーチン
+                 * negaalpha法で良いような気がする。
+                 */
+                const think = () => {
+                    // negaalphaを呼び出すと最善手が返ってくるはず。
+                    const pos = negaalpha()
+
+                    // 何も考えずにposに置けば良い。
+                    const res = try_put(turn.value, pos, board_plain.value)
+                    if (res.success) {
+                        board_plain.value = res.board
+                        gameState.value = { state: 'player', color: -turn.value }
+                    }
+                }
+
+                /**
+                 * negamax法
+                 * @type {(board: number[], color: number, depth: number) => { score: number, pos: [number, number]}}
+                 */
+                const negamax = (board, color, depth) => {
+                    if (depth < 1) {
+                        const score = calcScore(board, color)
+                        const pos = []
+                        return { score, pos }
+                    }
+
+                    // 眠くないときに考えないと分からん。
+                }
+
+                /**
+                 * 置ける場所一覧を作る関数
+                 * @type {(board: number[], color: number) => [number, number][]}
+                 */
+                const placeable = (board, color) => {
+                    const result = []
+                    for (let row = 1; row <= 8; ++row) {
+                        for (let col = 1; col <= 8; ++col) {
+                            if (board[p([row, col])] !== 0) continue
+                            const res = try_put(color, [row, col], board)
+                            if (res.success) result.push([row, col])
+                        }
+                    }
+                    return result
+                }
+
+                /**
+                 * 盤面の評価関数
+                 * @type {(board: number[], color: number) => number}
+                 */
+                const calcScore = (board, color) => {
+                    const weight = [
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                        0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 
+                        0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 
+                        0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 
+                        0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 
+                        0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 
+                        0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 
+                        0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 
+                        0, 1, 1, 1, 1, 1, 1, 1, 1, 0, 
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 
+                    ]
+
+                    const result = -color * board.reduce((p, c, i) => {
+                        return p + c * weight[i]
+                    }, 0)
+
+                    return result
+                }
+
+                // gameStateを監視する。
+                // gameStateが変更されるとこの関数が呼び出される。
+                Vue.watchEffect(() => {
+                    switch (gameState.value.state) {
+                        case 'player':
+                            // ここで次の手が打てるかどうかチェックしないといけないのでは。
+                            turn.value = gameState.value.color           
+                            break;
+
+                        case 'cpu':
+                            turn.value = gameState.value.color           
+                            break;
+
+                        case 'player_win':
+                            
+                            break;
+
+                        case 'player_lose':
+                            
+                            break;
+
+                        case 'draw':
+                            
+                            break;
+                    }
+                })
+
+                return {
+                    board,
+                    put,
+                }
+
+                // ↑ここにJavaScriptを書く。
+            },
+        } 
+
+        Vue.createApp(App).mount('#app')
+    </script>
+</body>
+</html>
